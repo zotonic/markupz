@@ -1,0 +1,10 @@
+{application, markupz, [
+    {description, "HTML to Markdown conversion for Erlang"},
+    {vsn, "git"},
+    {modules, []},
+    {registered, []},
+    {applications, [kernel, stdlib, zotonic_stdlib]},
+    {env, []},
+    {licenses, ["Apache-2.0"]},
+    {links, [{"GitHub", "https://github.com/zotonic/markupz"}]}
+]}.

@@ -65,6 +65,24 @@ serialized as raw HTML when `html => keep`. For example, a `div` with classes
 and a table with `rowspan` or `colspan` remain HTML. With `html => strip`, the
 wrapper is removed and its readable content is retained.
 
+Semantic asides and Zotonic/reStructuredText-style note admonitions are emitted
+as Pandoc-style fenced divs:
+
+```markdown
+::: {.aside}
+Tangential information.
+:::
+
+::: {.note title="Remember"}
+Important information.
+:::
+```
+
+In `faithful` mode, other `div` elements with a class or id and safe attributes
+are also emitted as fenced divs. Default mode retains generic divs as raw HTML
+for backward compatibility. Safe fenced-div attributes are `id`, `class`,
+`title`, `role`, `aria-*`, and `data-*`.
+
 When using the default preset:
 
 - a full document containing a `body` element contributes only that body's

@@ -161,3 +161,27 @@ options_test() ->
     ?assertError(
         {invalid_html, {invalid_option, mode, text}},
         markupz:to_markdown(<<"<p>Hello</p>">>, text)).
+
+aside_fenced_div_test() ->
+    ?assertEqual(
+        <<"::: {.aside}\nTangential information.\n:::">>,
+        markupz:to_markdown(
+            <<"<aside><p>Tangential information.</p></aside>">>)).
+
+note_fenced_div_test() ->
+    Html = <<
+        "<div class=\"admonition note\" role=\"note\">",
+        "<p class=\"first admonition-title\">Escaping</p>",
+        "<p class=\"last\">Results are safe.</p>",
+        "</div>"
+    >>,
+    ?assertEqual(
+        <<"::: {.note title=\"Escaping\"}\nResults are safe.\n:::">>,
+        markupz:to_markdown(Html)).
+
+faithful_generic_fenced_div_test() ->
+    Html = <<"<div id=\"sample\" class=\"box\"><p>Hello.</p></div>">>,
+    ?assertEqual(
+        <<"::: {#sample .box}\nHello.\n:::">>,
+        markupz:to_markdown(Html, faithful)),
+    ?assertEqual(Html, markupz:to_markdown(Html, default)).

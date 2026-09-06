@@ -90,12 +90,17 @@ render_node({Tag, Attributes, Children} = Node, Context) ->
         true ->
             [];
         false ->
-            case is_presentation_table(Tag, Attributes, Context) of
-                true -> render_text_table(Children, Context);
-                false ->
-                    case preserve_as_html(Tag, Attributes, Node, Context) of
-                        true -> raw_html(Node, Tag);
-                        false -> render_tag(Tag, Attributes, Children, Context)
+            case render_fenced_div(Tag, Attributes, Children, Context) of
+                {ok, Rendered} ->
+                    Rendered;
+                nomatch ->
+                    case is_presentation_table(Tag, Attributes, Context) of
+                        true -> render_text_table(Children, Context);
+                        false ->
+                            case preserve_as_html(Tag, Attributes, Node, Context) of
+                                true -> raw_html(Node, Tag);
+                                false -> render_tag(Tag, Attributes, Children, Context)
+                            end
                     end
             end
     end;
@@ -103,6 +108,130 @@ render_node(Node, #ctx{html = keep}) when is_tuple(Node) ->
     block(z_html_parse:to_html(Node));
 render_node(_Node, #ctx{html = strip}) ->
     [].
+
+render_fenced_div(_Tag, _Attributes, _Children, #ctx{mode = email}) ->
+    nomatch;
+render_fenced_div(<<"aside">>, Attributes, Children, Context) ->
+    Classes = class_tokens(proplists:get_value(<<"class">>, Attributes, <<>>)),
+    Attributes1 = put_class_tokens([<<"aside">> | Classes], Attributes),
+    render_fenced_div_1(Attributes1, Children, Context);
+render_fenced_div(<<"div">>, Attributes, Children, #ctx{mode = faithful} = Context) ->
+    case container_attributes_supported(Attributes) andalso has_container_identity(Attributes) of
+        true ->
+            case is_note_container(Attributes) of
+                true -> render_note_fenced_div(Attributes, Children, Context);
+                false -> render_fenced_div_1(Attributes, Children, Context)
+            end;
+        false ->
+            nomatch
+    end;
+render_fenced_div(<<"div">>, Attributes, Children, #ctx{mode = default} = Context) ->
+    case is_note_container(Attributes) of
+        true -> render_note_fenced_div(Attributes, Children, Context);
+        false -> nomatch
+    end;
+render_fenced_div(_Tag, _Attributes, _Children, _Context) ->
+    nomatch.
+
+render_note_fenced_div(Attributes0, Children0, Context) ->
+    {Title, Children1} = take_admonition_title(Children0),
+    Classes0 = class_tokens(proplists:get_value(<<"class">>, Attributes0, <<>>)),
+    Classes = [Class || Class <- Classes0, Class =/= <<"admonition">>],
+    Attributes1 = put_class_tokens(Classes, proplists:delete(<<"role">>, Attributes0)),
+    Attributes = case Title of
+        undefined -> Attributes1;
+        _ -> put_attribute(<<"title">>, Title, Attributes1)
+    end,
+    Children = [remove_layout_classes(Child) || Child <- Children1],
+    render_fenced_div_1(Attributes, Children, Context).
+
+render_fenced_div_1(Attributes, Children, Context) ->
+    case container_attributes_supported(Attributes) of
+        true ->
+            Content = z_string:trim(render_nodes(Children, Context)),
+            FenceLength = erlang:max(3, longest_run(Content, $:) + 1),
+            Fence = binary:copy(<<":">>, FenceLength),
+            Info = render_container_info(Attributes),
+            {ok, block([Fence, $\s, Info, $\n, Content, $\n, Fence])};
+        false ->
+            nomatch
+    end.
+
+is_note_container(Attributes) ->
+    Classes = class_tokens(proplists:get_value(<<"class">>, Attributes, <<>>)),
+    lists:member(<<"note">>, Classes) andalso lists:member(<<"admonition">>, Classes).
+
+take_admonition_title([
+        {<<"p">>, Attributes, Children} | Rest
+    ]) ->
+    Classes = class_tokens(proplists:get_value(<<"class">>, Attributes, <<>>)),
+    case lists:member(<<"admonition-title">>, Classes) of
+        true -> {z_string:trim(text_content(Children)), Rest};
+        false -> {undefined, [{<<"p">>, Attributes, Children} | Rest]}
+    end;
+take_admonition_title(Children) ->
+    {undefined, Children}.
+
+remove_layout_classes({Tag, Attributes, Children}) ->
+    Classes0 = class_tokens(proplists:get_value(<<"class">>, Attributes, <<>>)),
+    Classes = [Class || Class <- Classes0, Class =/= <<"first">>, Class =/= <<"last">>],
+    {Tag, put_class_tokens(Classes, Attributes), Children};
+remove_layout_classes(Node) ->
+    Node.
+
+has_container_identity(Attributes) ->
+    Attributes =/= [].
+
+container_attributes_supported(Attributes) ->
+    lists:all(fun container_attribute_supported/1, Attributes).
+
+container_attribute_supported({<<"id">>, _Value}) -> true;
+container_attribute_supported({<<"class">>, _Value}) -> true;
+container_attribute_supported({<<"title">>, _Value}) -> true;
+container_attribute_supported({<<"role">>, _Value}) -> true;
+container_attribute_supported({<<"aria-", Name/binary>>, _Value}) -> Name =/= <<>>;
+container_attribute_supported({<<"data-", Name/binary>>, _Value}) -> Name =/= <<>>;
+container_attribute_supported(_) -> false.
+
+put_attribute(Name, Value, Attributes) ->
+    [{Name, Value} | proplists:delete(Name, Attributes)].
+
+put_class_tokens([], Attributes) ->
+    proplists:delete(<<"class">>, Attributes);
+put_class_tokens(Classes, Attributes) ->
+    Unique = unique(Classes, []),
+    put_attribute(<<"class">>, iolist_to_binary(lists:join($\s, Unique)), Attributes).
+
+unique([], Acc) -> lists:reverse(Acc);
+unique([Value | Rest], Acc) ->
+    case lists:member(Value, Acc) of
+        true -> unique(Rest, Acc);
+        false -> unique(Rest, [Value | Acc])
+    end.
+
+render_container_info(Attributes) ->
+    Classes = class_tokens(proplists:get_value(<<"class">>, Attributes, <<>>)),
+    Id = proplists:get_value(<<"id">>, Attributes),
+    Other = [
+        render_container_attribute(Name, Value)
+        || {Name, Value} <- Attributes,
+           Name =/= <<"class">>,
+           Name =/= <<"id">>
+    ],
+    IdTokens = case Id of
+        undefined -> [];
+        _ -> [[<<"#">>, Id]]
+    end,
+    ClassTokens = [[<<".">>, Class] || Class <- Classes],
+    Tokens = IdTokens ++ ClassTokens ++ Other,
+    iolist_to_binary([${, lists:join($\s, Tokens), $}]).
+
+render_container_attribute(Name, Value) ->
+    [Name, <<"=\"">>, escape_attribute(Value), $"].
+
+escape_attribute(Value) ->
+    EscapedSlash = binary:replace(Value, <<"\\">>, <<"\\\\">>, [global]),
+    binary:replace(EscapedSlash, <<"\"">>, <<"\\\"">>, [global]).
 
 preserve_as_html(_Tag, _Attributes, _Node, #ctx{html = strip}) ->
     false;
